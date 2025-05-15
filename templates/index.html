@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 offset-lg-2">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h2 class="card-title mb-0">夢境分析與視覺化</h2>
+            </div>
+            <div class="card-body">
+                <div class="input-section">
+                    <form id="dream-form">
+                        <div class="mb-3">
+                            <label for="dream-input" class="form-label">請輸入您的夢境片段：</label>
+                            <textarea id="dream-input" name="dream" class="form-control" 
+                                rows="5" placeholder="例如：我夢見自己在飛行，下方是一片湛藍的大海，突然看到一座閃閃發光的城堡..." required></textarea>
+                            <div class="form-text" id="char-count">0 個字</div>
+                        </div>
+                        <div class="text-center">
+                            <button type="submit" class="btn btn-primary" id="analyze-btn">開始分析</button>
+                        </div>
+                    </form>
+                </div>
+                
+                <div class="loading mt-4" id="loading" style="display: none;">
+                    <div class="text-center mb-3">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">處理中...</span>
+                        </div>
+                    </div>
+                    <p class="text-center" id="process-status">正在分析夢境元素...</p>
+                    <div class="progress">
+                        <div class="progress-bar" id="progress-bar" role="progressbar" style="width: 0%;" 
+                            aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                </div>
+                
+                <div class="alert alert-danger mt-3" id="error-message" style="display: none;"></div>
+            </div>
+        </div>
+        
+        <div class="results-section mt-4" id="results" style="display: none;">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0">故事初稿</h5>
+                        </div>
+                        <div class="card-body">
+                            <p id="initial-story"></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0">故事反饋</h5>
+                        </div>
+                        <div class="card-body">
+                            <p id="story-feedback"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">完整故事</h5>
+                </div>
+                <div class="card-body">
+                    <p id="final-story"></p>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">故事翻譯</h5>
+                </div>
+                <div class="card-body">
+                    <p id="translation"></p>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">視覺化夢境</h5>
+                        </div>
+                        <div class="card-body text-center">
+                            <img id="dream-image" class="img-fluid rounded" src="" alt="視覺化夢境圖像">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header bg-danger text-white">
+                            <h5 class="mb-0">夢境心理分析</h5>
+                        </div>
+                        <div class="card-body">
+                            <p id="psychology-analysis"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center mb-4">
+                <button id="restart-btn" class="btn btn-primary">重新開始</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        const dreamInput = $('#dream-input');
+        const dreamForm = $('#dream-form');
+        const analyzeBtn = $('#analyze-btn');
+        const loading = $('#loading');
+        const results = $('#results');
+        const charCount = $('#char-count');
+        const processStatus = $('#process-status');
+        const progressBar = $('#progress-bar');
+        const errorMessage = $('#error-message');
+        const restartBtn = $('#restart-btn');
+        
+        // 處理進度的步驟
+        const steps = [
+            { status: '正在分析夢境元素...', progress: 10 },
+            { status: '正在生成故事架構...', progress: 20 },
+            { status: '正在創作初步故事...', progress: 35 },
+            { status: '正在評估故事品質...', progress: 50 },
+            { status: '正在優化故事內容...', progress: 65 },
+            { status: '正在翻譯故事...', progress: 75 },
+            { status: '正在生成視覺圖像...', progress: 85 },
+            { status: '正在進行心理分析...', progress: 95 },
+            { status: '完成！', progress: 100 }
+        ];
+        
+        // 字數計算
+        dreamInput.on('input', function() {
+            const count = dreamInput.val().length;
+            charCount.text(count + ' 個字');
+        });
+        
+        // 表單提交
+        dreamForm.on('submit', function(e) {
+            e.preventDefault();
+            
+            const dreamText = dreamInput.val().trim();
+            
+            if (dreamText.length < 10) {
+                errorMessage.text('請輸入至少10個字的夢境描述');
+                errorMessage.show();
+                return;
+            }
+            
+            // 隱藏錯誤訊息
+            errorMessage.hide();
+            
+            // 禁用提交按鈕
+            analyzeBtn.prop('disabled', true);
+            
+            // 顯示載入中
+            loading.show();
+            results.hide();
+            
+            // 重置進度條
+            progressBar.css('width', '0%');
+            progressBar.attr('aria-valuenow', 0);
+            
+            // 使用AJAX發送請求
+            processDream(dreamText);
+        });
+        
+        // 重新開始按鈕
+        restartBtn.on('click', function() {
+            results.hide();
+            dreamInput.val('');
+            charCount.text('0 個字');
+            analyzeBtn.prop('disabled', false);
+            dreamInput.focus();
+        });
+        
+        // 處理夢境分析
+        function processDream(dreamText) {
+            // 模擬進度更新
+            let currentStep = 0;
+            
+            const progressInterval = setInterval(function() {
+                if (currentStep >= steps.length) {
+                    clearInterval(progressInterval);
+                    return;
+                }
+                
+                const step = steps[currentStep];
+                processStatus.text(step.status);
+                progressBar.css('width', step.progress + '%');
+                progressBar.attr('aria-valuenow', step.progress);
+                
+                currentStep++;
+            }, 1000);
+            
+            // 發送API請求
+            $.ajax({
+                url: '/api/analyze',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ dream: dreamText }),
+                success: function(response) {
+                    // 確保進度條走完
+                    setTimeout(function() {
+                        clearInterval(progressInterval);
+                        processStatus.text('完成！');
+                        progressBar.css('width', '100%');
+                        progressBar.attr('aria-valuenow', 100);
+                        
+                        // 顯示結果
+                        displayResults(response);
+                        
+                        // 隱藏載入中
+                        setTimeout(function() {
+                            loading.hide();
+                            analyzeBtn.prop('disabled', false);
+                            results.show();
+                        }, 500);
+                    }, steps.length * 1000 - 500);
+                },
+                error: function(xhr, status, error) {
+                    clearInterval(progressInterval);
+                    loading.hide();
+                    analyzeBtn.prop('disabled', false);
+                    
+                    let errorMsg = '處理請求時發生錯誤';
+                    if (xhr.responseJSON && xhr.responseJSON.error) {
+                        errorMsg = xhr.responseJSON.error;
+                    }
+                    
+                    errorMessage.text(errorMsg);
+                    errorMessage.show();
+                }
+            });
+        }
+        
+        // 顯示結果
+        function displayResults(data) {
+            // 填充結果
+            $('#initial-story').text(data.initialStory);
+            $('#story-feedback').text(data.storyFeedback);
+            $('#final-story').text(data.finalStory);
+            $('#translation').text(data.translation);
+            $('#psychology-analysis').text(data.psychologyAnalysis);
+            
+            // 設置圖像
+            if (data.imagePath) {
+                $('#dream-image').attr('src', data.imagePath);
+            } else {
+                $('#dream-image').attr('src', '/static/images/default_dream.png');
+            }
+        }
+    });
+</script>
+{% endblock %}

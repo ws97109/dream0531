@@ -1,0 +1,98 @@
+/* styles.css */
+
+body {
+    background-color: #f8f9fa;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.container {
+    flex: 1;
+}
+
+.navbar-brand {
+    font-weight: bold;
+}
+
+.footer {
+    margin-top: 2rem;
+}
+
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    font-weight: bold;
+}
+
+textarea {
+    resize: vertical;
+    min-height: 120px;
+}
+
+.loading {
+    margin: 30px 0;
+}
+
+.progress {
+    height: 12px;
+    margin-top: 15px;
+}
+
+.progress-bar {
+    transition: width 0.6s ease;
+}
+
+#dream-image {
+    max-width: 100%;
+    max-height: 400px;
+    margin: 0 auto;
+    display: block;
+    border: 1px solid #ddd;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 添加一些漸變效果 */
+.bg-primary {
+    background: linear-gradient(135deg, #4e73df 0%, #224abe 100%) !important;
+}
+
+.bg-success {
+    background: linear-gradient(135deg, #1cc88a 0%, #13855c 100%) !important;
+}
+
+.bg-info {
+    background: linear-gradient(135deg, #36b9cc 0%, #258391 100%) !important;
+}
+
+.bg-danger {
+    background: linear-gradient(135deg, #e74a3b 0%, #be392f 100%) !important;
+}
+
+.bg-secondary {
+    background: linear-gradient(135deg, #858796 0%, #60616f 100%) !important;
+}
+
+/* 添加動畫 */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.results-section {
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+/* 響應式調整 */
+@media (max-width: 768px) {
+    .card-body {
+        padding: 1rem;
+    }
+    
+    h5 {
+        font-size: 1.1rem;
+    }
+}
