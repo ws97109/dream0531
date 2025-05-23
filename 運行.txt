@@ -1,0 +1,12 @@
+創建環境
+conda create -n dream python=3.10
+conda activate dream
+pip install -r requirements.txt
+
+啟動Fooocus API服務
+
+cd Fooocus
+pip install -r requirements_requirements_versions.txt
+
+# 3. 啟動 Fooocus API 服務
+python launch.py --listen --port 8888
