@@ -30,9 +30,10 @@
                     </div>
                     <p class="text-center" id="process-status">正在分析夢境元素...</p>
                     <div class="progress">
-                        <div class="progress-bar" id="progress-bar" role="progressbar" style="width: 0%;" 
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" id="progress-bar" role="progressbar" style="width: 0%;" 
                             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
                     </div>
+                    <p class="text-center text-muted mt-2 small" id="process-detail">分析夢境元素並創建故事架構...</p>
                 </div>
                 
                 <div class="alert alert-danger mt-3" id="error-message" style="display: none;"></div>
@@ -90,6 +91,7 @@
                         </div>
                         <div class="card-body text-center">
                             <img id="dream-image" class="img-fluid rounded" src="" alt="視覺化夢境圖像">
+                            <div class="text-muted small mt-2">由 Fooocus AI 生成</div>
                         </div>
                     </div>
                 </div>
@@ -106,8 +108,55 @@
                 </div>
             </div>
             
+            <!-- 新增視頻部分 -->
+            <div class="card mb-4">
+                <div class="card-header bg-warning text-white">
+                    <h5 class="mb-0">夢境視頻</h5>
+                </div>
+                <div class="card-body text-center">
+                    <video id="dream-video" class="img-fluid rounded" controls>
+                        <source src="" type="video/mp4">
+                        您的瀏覽器不支持視頻播放。
+                    </video>
+                    <div class="text-muted small mt-2">由 FramePack 生成</div>
+                </div>
+            </div>
+            
             <div class="text-center mb-4">
                 <button id="restart-btn" class="btn btn-primary">重新開始</button>
+                <button id="share-btn" class="btn btn-success ms-2">分享結果</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 分享模態框 -->
+<div class="modal fade" id="shareModal" tabindex="-1" aria-labelledby="shareModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="shareModalLabel">分享您的夢境分析結果</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="share-link" class="form-label">分享連結</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="share-link" readonly>
+                        <button class="btn btn-outline-secondary" type="button" id="copy-link-btn">複製</button>
+                    </div>
+                </div>
+                <div class="d-grid gap-2 mt-3">
+                    <button type="button" class="btn btn-primary" id="share-facebook-btn">
+                        <i class="bi bi-facebook"></i> 分享到 Facebook
+                    </button>
+                    <button type="button" class="btn btn-info text-white" id="share-twitter-btn">
+                        <i class="bi bi-twitter"></i> 分享到 Twitter
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
             </div>
         </div>
     </div>
@@ -124,21 +173,29 @@
         const results = $('#results');
         const charCount = $('#char-count');
         const processStatus = $('#process-status');
+        const processDetail = $('#process-detail');
         const progressBar = $('#progress-bar');
         const errorMessage = $('#error-message');
         const restartBtn = $('#restart-btn');
+        const shareBtn = $('#share-btn');
+        const copyLinkBtn = $('#copy-link-btn');
+        const shareFacebookBtn = $('#share-facebook-btn');
+        const shareTwitterBtn = $('#share-twitter-btn');
         
-        // 處理進度的步驟
+        // 處理進度的步驟 (新增了AI圖像生成和視頻生成的更詳細步驟)
         const steps = [
-            { status: '正在分析夢境元素...', progress: 10 },
-            { status: '正在生成故事架構...', progress: 20 },
-            { status: '正在創作初步故事...', progress: 35 },
-            { status: '正在評估故事品質...', progress: 50 },
-            { status: '正在優化故事內容...', progress: 65 },
-            { status: '正在翻譯故事...', progress: 75 },
-            { status: '正在生成視覺圖像...', progress: 85 },
-            { status: '正在進行心理分析...', progress: 95 },
-            { status: '完成！', progress: 100 }
+            { status: '正在分析夢境元素...', detail: '識別關鍵元素與象徵意義', progress: 5 },
+            { status: '正在生成故事架構...', detail: '創建可能的故事架構並選擇最佳方案', progress: 15 },
+            { status: '正在創作初步故事...', detail: '融合夢境元素創作初稿', progress: 25 },
+            { status: '正在評估故事品質...', detail: '檢查元素融合度與故事連貫性', progress: 35 },
+            { status: '正在優化故事內容...', detail: '根據評估反饋完善故事', progress: 45 },
+            { status: '正在翻譯故事...', detail: '翻譯為英文以提升圖像生成品質', progress: 55 },
+            { status: '正在準備圖像生成...', detail: '準備生成參數與提示詞', progress: 60 },
+            { status: '正在生成視覺圖像...', detail: '使用 Fooocus AI 創建夢境視覺化圖像', progress: 70 },
+            { status: '正在等待圖像生成...', detail: '這可能需要一些時間，請耐心等待', progress: 75 },
+            { status: '正在創建夢境視頻...', detail: '使用 FramePack 製作夢境動態影像', progress: 85 },
+            { status: '正在進行心理分析...', detail: '根據夢境內容、圖像和視頻進行深度分析', progress: 95 },
+            { status: '完成！', detail: '您的夢境分析結果已經準備好', progress: 100 }
         ];
         
         // 字數計算
@@ -172,6 +229,7 @@
             // 重置進度條
             progressBar.css('width', '0%');
             progressBar.attr('aria-valuenow', 0);
+            processDetail.text(steps[0].detail);
             
             // 使用AJAX發送請求
             processDream(dreamText);
@@ -186,9 +244,45 @@
             dreamInput.focus();
         });
         
+        // 分享按鈕
+        shareBtn.on('click', function() {
+            // 創建一個唯一的URL或是短連結
+            const shareUrl = window.location.origin + '/share/' + Date.now();
+            $('#share-link').val(shareUrl);
+            
+            // 顯示分享模態框
+            var shareModal = new bootstrap.Modal(document.getElementById('shareModal'));
+            shareModal.show();
+        });
+        
+        // 複製連結
+        copyLinkBtn.on('click', function() {
+            const shareLink = $('#share-link');
+            shareLink.select();
+            document.execCommand('copy');
+            
+            // 顯示複製成功
+            copyLinkBtn.text('已複製!');
+            setTimeout(function() {
+                copyLinkBtn.text('複製');
+            }, 2000);
+        });
+        
+        // 社交媒體分享按鈕
+        shareFacebookBtn.on('click', function() {
+            const shareUrl = $('#share-link').val();
+            window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(shareUrl), '_blank');
+        });
+        
+        shareTwitterBtn.on('click', function() {
+            const shareUrl = $('#share-link').val();
+            const shareText = '我剛剛使用夢境分析系統分析了我的夢境，看看結果！';
+            window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(shareText) + '&url=' + encodeURIComponent(shareUrl), '_blank');
+        });
+        
         // 處理夢境分析
         function processDream(dreamText) {
-            // 模擬進度更新
+            // 進度更新
             let currentStep = 0;
             
             const progressInterval = setInterval(function() {
@@ -199,10 +293,18 @@
                 
                 const step = steps[currentStep];
                 processStatus.text(step.status);
+                processDetail.text(step.detail);
                 progressBar.css('width', step.progress + '%');
                 progressBar.attr('aria-valuenow', step.progress);
                 
-                currentStep++;
+                // 圖像生成步驟需要停留更長時間
+                if (step.status.includes('生成視覺圖像')) {
+                    setTimeout(function() {
+                        currentStep++;
+                    }, 2000); // 多等待2秒
+                } else {
+                    currentStep++;
+                }
             }, 1000);
             
             // 發送API請求
@@ -216,6 +318,7 @@
                     setTimeout(function() {
                         clearInterval(progressInterval);
                         processStatus.text('完成！');
+                        processDetail.text('您的夢境分析結果已經準備好');
                         progressBar.css('width', '100%');
                         progressBar.attr('aria-valuenow', 100);
                         
@@ -228,7 +331,7 @@
                             analyzeBtn.prop('disabled', false);
                             results.show();
                         }, 500);
-                    }, steps.length * 1000 - 500);
+                    }, Math.max(0, steps.length * 1000 - 1000));
                 },
                 error: function(xhr, status, error) {
                     clearInterval(progressInterval);
@@ -258,8 +361,17 @@
             // 設置圖像
             if (data.imagePath) {
                 $('#dream-image').attr('src', data.imagePath);
+                $('#dream-image').attr('alt', '夢境視覺化圖像');
             } else {
                 $('#dream-image').attr('src', '/static/images/default_dream.png');
+                $('#dream-image').attr('alt', '未能生成夢境圖像');
+            }
+            
+            // 設置視頻
+            if (data.videoPath) {
+                const video = $('#dream-video');
+                video.find('source').attr('src', data.videoPath);
+                video[0].load(); // 重新加載視頻元素
             }
         }
     });

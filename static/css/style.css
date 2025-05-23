@@ -22,6 +22,12 @@ body {
 .card {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     margin-bottom: 20px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
 .card-header {
@@ -40,6 +46,8 @@ textarea {
 .progress {
     height: 12px;
     margin-top: 15px;
+    border-radius: 6px;
+    overflow: hidden;
 }
 
 .progress-bar {
@@ -53,9 +61,39 @@ textarea {
     display: block;
     border: 1px solid #ddd;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
 }
 
-/* 添加一些漸變效果 */
+#dream-image:hover {
+    transform: scale(1.02);
+}
+
+/* 視頻樣式 */
+#dream-video {
+    max-width: 100%;
+    max-height: 500px;
+    margin: 0 auto;
+    display: block;
+    border: 1px solid #ddd;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    background-color: #000;
+    border-radius: 6px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+#dream-video:hover {
+    transform: scale(1.02);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* 進度詳情樣式 */
+#process-detail {
+    font-size: 0.85rem;
+    color: #6c757d;
+    margin-top: 8px;
+}
+
+/* 添加漸變效果 */
 .bg-primary {
     background: linear-gradient(135deg, #4e73df 0%, #224abe 100%) !important;
 }
@@ -76,6 +114,10 @@ textarea {
     background: linear-gradient(135deg, #858796 0%, #60616f 100%) !important;
 }
 
+.bg-warning {
+    background: linear-gradient(135deg, #f6c23e 0%, #dda20a 100%) !important;
+}
+
 /* 添加動畫 */
 @keyframes fadeIn {
     from { opacity: 0; }
@@ -86,6 +128,61 @@ textarea {
     animation: fadeIn 0.5s ease-in-out;
 }
 
+/* 視頻淡入效果 */
+@keyframes videoFadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+#dream-video {
+    animation: videoFadeIn 0.8s ease-in-out;
+}
+
+/* 卡片淡入效果 */
+@keyframes cardFadeIn {
+    from { opacity: 0; transform: translateY(15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.card {
+    animation: cardFadeIn 0.4s ease-in-out;
+}
+
+/* 分享按鈕樣式 */
+#share-btn {
+    transition: background-color 0.3s ease;
+}
+
+#share-btn:hover {
+    background-color: #218838;
+}
+
+/* 社交媒體分享按鈕 */
+#share-facebook-btn {
+    background-color: #3b5998;
+    border-color: #3b5998;
+}
+
+#share-twitter-btn {
+    background-color: #1da1f2;
+    border-color: #1da1f2;
+}
+
+/* 複製按鈕效果 */
+#copy-link-btn {
+    transition: all 0.3s ease;
+}
+
+#copy-link-btn:active {
+    transform: translateY(2px);
+}
+
+/* 分享鏈接輸入框 */
+#share-link {
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+}
+
 /* 響應式調整 */
 @media (max-width: 768px) {
     .card-body {
@@ -94,5 +191,70 @@ textarea {
     
     h5 {
         font-size: 1.1rem;
+    }
+    
+    #dream-video {
+        max-height: 300px;
+    }
+    
+    /* 在手機上調整進度條大小 */
+    .progress {
+        height: 10px;
+        margin-top: 10px;
+    }
+    
+    /* 在手機上調整按鈕大小和間距 */
+    #restart-btn, #share-btn {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.9rem;
+    }
+}
+
+/* 添加暗色模式支持 */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #1a1a1a;
+        color: #f8f9fa;
+    }
+    
+    .card {
+        background-color: #2d2d2d;
+        border-color: #444;
+    }
+    
+    .card-body {
+        color: #e0e0e0;
+    }
+    
+    .form-control {
+        background-color: #2d2d2d;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+    
+    .form-control:focus {
+        background-color: #363636;
+        color: #fff;
+    }
+    
+    .form-text, .text-muted {
+        color: #adb5bd !important;
+    }
+    
+    .text-dark {
+        color: #e0e0e0 !important;
+    }
+    
+    .modal-content {
+        background-color: #2d2d2d;
+        color: #e0e0e0;
+    }
+    
+    .modal-header, .modal-footer {
+        border-color: #444;
+    }
+    
+    .btn-close {
+        filter: invert(1) grayscale(100%) brightness(200%);
     }
 }
