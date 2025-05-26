@@ -53,12 +53,29 @@ def sample_hunyuan(
         callback=None,
         **kwargs,
 ):
-    device = device or transformer.device
+    # 自動檢測設備
+    if device is None:
+        if torch.backends.mps.is_available():
+            device = torch.device('mps')
+        elif torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+    else:
+        device = device or transformer.device
 
     if batch_size is None:
         batch_size = int(prompt_embeds.shape[0])
 
-    latents = torch.randn((batch_size, 16, (frames + 3) // 4, height // 8, width // 8), generator=generator, device=generator.device).to(device=device, dtype=torch.float32)
+    # 為不同設備調整數據類型
+    if device.type == 'mps':
+        # MPS 有時對某些數據類型支援有限，使用 float32
+        latent_dtype = torch.float32
+    else:
+        latent_dtype = torch.float32
+
+    latents = torch.randn((batch_size, 16, (frames + 3) // 4, height // 8, width // 8), 
+                         generator=generator, device=generator.device).to(device=device, dtype=latent_dtype)
 
     B, C, T, H, W = latents.shape
     seq_length = T * H * W // 4
@@ -74,8 +91,8 @@ def sample_hunyuan(
 
     if initial_latent is not None:
         sigmas = sigmas * strength
-        first_sigma = sigmas[0].to(device=device, dtype=torch.float32)
-        initial_latent = initial_latent.to(device=device, dtype=torch.float32)
+        first_sigma = sigmas[0].to(device=device, dtype=latent_dtype)
+        initial_latent = initial_latent.to(device=device, dtype=latent_dtype)
         latents = initial_latent.float() * (1.0 - first_sigma) + latents.float() * first_sigma
 
     if concat_latent is not None:

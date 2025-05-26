@@ -13,6 +13,11 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import numpy as np
 
+# 新增的導入
+import torch
+from diffusers import StableDiffusionPipeline, StableVideoDiffusionPipeline
+import cv2
+
 # 設定日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -28,335 +33,270 @@ app = Flask(__name__,
 # Ollama API（僅用於文本生成）
 OLLAMA_API = "http://localhost:11434/api/generate"
 
-# 本地路徑設定 - 請根據您的實際情況修改
-FOOOCUS_PATH = "/Users/lishengfeng/Desktop/淡江課程/生成式AI/期末報告/Fooocus"
-FRAMEPACK_PATH = "/Users/lishengfeng/Desktop/淡江課程/生成式AI/期末報告/FramePack"
+# 全局變數
+image_pipe = None
+video_pipe = None
+models_loaded = False
 
-# FramePack 直接整合的全局變量
-framepack_models_loaded = False
-framepack_models = {}
+# ==================== 本地模型初始化 ====================
 
-# ==================== FramePack 直接整合 ====================
-
-def initialize_framepack_models():
-    """初始化 FramePack 模型（僅在第一次使用時載入）"""
-    global framepack_models_loaded, framepack_models
+def initialize_local_models():
+    """初始化本地 Diffusers 模型"""
+    global image_pipe, video_pipe, models_loaded
     
-    if framepack_models_loaded:
+    if models_loaded:
         return True
     
     try:
-        logger.info("開始初始化 FramePack 模型...")
+        logger.info("初始化本地 Diffusers 模型...")
         
-        # 添加 FramePack 路徑到 Python 路徑
-        if FRAMEPACK_PATH not in sys.path:
-            sys.path.insert(0, FRAMEPACK_PATH)
+        # 檢測設備
+        if torch.backends.mps.is_available():
+            device = "mps"
+            torch_dtype = torch.float16
+        elif torch.cuda.is_available():
+            device = "cuda"
+            torch_dtype = torch.float16
+        else:
+            device = "cpu"
+            torch_dtype = torch.float32
         
-        # 設定環境變量
-        os.environ['HF_HOME'] = os.path.join(FRAMEPACK_PATH, 'hf_download')
+        logger.info(f"使用設備: {device}")
         
-        # 導入必要模塊
-        import torch
-        from diffusers import AutoencoderKLHunyuanVideo
-        from transformers import LlamaModel, CLIPTextModel, LlamaTokenizerFast, CLIPTokenizer
-        from transformers import SiglipImageProcessor, SiglipVisionModel
-        
-        # 導入 FramePack 特定模塊
-        from diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModelPacked
-        from diffusers_helper.memory import get_cuda_free_memory_gb
-        
-        # 檢查 GPU 記憶體
-        try:
-            free_mem_gb = get_cuda_free_memory_gb(torch.device('cuda'))
-            high_vram = free_mem_gb > 20  # 降低需求
-            logger.info(f"可用 VRAM: {free_mem_gb} GB, 高記憶體模式: {high_vram}")
-        except:
-            logger.warning("無法檢測 GPU，使用 CPU 模式")
-            high_vram = False
-        
-        # 載入模型（使用較小的記憶體設定）
-        logger.info("載入文本編碼器...")
-        text_encoder = LlamaModel.from_pretrained(
-            "hunyuanvideo-community/HunyuanVideo", 
-            subfolder='text_encoder', 
-            torch_dtype=torch.float16
-        ).cpu()
-        
-        text_encoder_2 = CLIPTextModel.from_pretrained(
-            "hunyuanvideo-community/HunyuanVideo", 
-            subfolder='text_encoder_2', 
-            torch_dtype=torch.float16
-        ).cpu()
-        
-        logger.info("載入分詞器...")
-        tokenizer = LlamaTokenizerFast.from_pretrained(
-            "hunyuanvideo-community/HunyuanVideo", 
-            subfolder='tokenizer'
+        # 文字轉圖像模型 - 使用較小的模型
+        logger.info("載入圖像生成模型...")
+        image_pipe = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            torch_dtype=torch_dtype,
+            use_safetensors=True,
+            variant="fp16" if torch_dtype == torch.float16 else None,
+            safety_checker=None,          # 禁用安全檢查器
+            requires_safety_checker=False  # 不需要安全檢查器
         )
-        tokenizer_2 = CLIPTokenizer.from_pretrained(
-            "hunyuanvideo-community/HunyuanVideo", 
-            subfolder='tokenizer_2'
-        )
-        
-        logger.info("載入 VAE...")
-        vae = AutoencoderKLHunyuanVideo.from_pretrained(
-            "hunyuanvideo-community/HunyuanVideo", 
-            subfolder='vae', 
-            torch_dtype=torch.float16
-        ).cpu()
-        
-        logger.info("載入圖像編碼器...")
-        feature_extractor = SiglipImageProcessor.from_pretrained(
-            "lllyasviel/flux_redux_bfl", 
-            subfolder='feature_extractor'
-        )
-        image_encoder = SiglipVisionModel.from_pretrained(
-            "lllyasviel/flux_redux_bfl", 
-            subfolder='image_encoder', 
-            torch_dtype=torch.float16
-        ).cpu()
-        
-        logger.info("載入變換器...")
-        transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained(
-            'lllyasviel/FramePackI2V_HY', 
-            torch_dtype=torch.bfloat16
-        ).cpu()
-        
-        # 設定模型為評估模式
-        vae.eval()
-        text_encoder.eval()
-        text_encoder_2.eval()
-        image_encoder.eval()
-        transformer.eval()
+        image_pipe = image_pipe.to(device)
         
         # 啟用記憶體優化
-        if not high_vram:
-            vae.enable_slicing()
-            vae.enable_tiling()
+        if device != "mps":  # MPS 暫不支援某些優化
+            image_pipe.enable_model_cpu_offload()
+        image_pipe.enable_attention_slicing()
         
-        # 設定高質量輸出
-        transformer.high_quality_fp32_output_for_inference = True
+        # 圖像轉視頻模型 - 使用輕量版本
+        logger.info("載入視頻生成模型...")
+        video_pipe = StableVideoDiffusionPipeline.from_pretrained(
+            "stabilityai/stable-video-diffusion-img2vid-xt",
+            torch_dtype=torch_dtype,
+            variant="fp16" if torch_dtype == torch.float16 else None
+        )
+        video_pipe = video_pipe.to(device)
         
-        # 禁用梯度計算
-        vae.requires_grad_(False)
-        text_encoder.requires_grad_(False)
-        text_encoder_2.requires_grad_(False)  
-        image_encoder.requires_grad_(False)
-        transformer.requires_grad_(False)
+        # 視頻模型記憶體優化
+        if device != "mps":
+            video_pipe.enable_model_cpu_offload()
         
-        # 保存模型到全局變量
-        framepack_models = {
-            'text_encoder': text_encoder,
-            'text_encoder_2': text_encoder_2,
-            'tokenizer': tokenizer,
-            'tokenizer_2': tokenizer_2,
-            'vae': vae,
-            'feature_extractor': feature_extractor,
-            'image_encoder': image_encoder,
-            'transformer': transformer,
-            'high_vram': high_vram
-        }
-        
-        framepack_models_loaded = True
-        logger.info("✅ FramePack 模型初始化完成")
+        models_loaded = True
+        logger.info("✅ 本地模型初始化完成")
         return True
         
-    except ImportError as e:
-        logger.error(f"❌ FramePack 模塊導入失敗: {str(e)}")
-        logger.error("請確認 FramePack 依賴已正確安裝")
-        return False
     except Exception as e:
-        logger.error(f"❌ FramePack 模型初始化失敗: {str(e)}")
+        logger.error(f"模型初始化失敗: {str(e)}")
         return False
 
-def generate_video_with_framepack_direct(image_path, prompt):
-    """直接使用 FramePack 核心功能生成視頻"""
+# ==================== 故事轉圖像提示詞 ====================
+
+def story_to_image_prompt(story_text):
+    """將故事內容轉換為適合圖像生成的提示詞"""
+    try:
+        system_prompt = """你是一位專業的AI繪畫提示詞專家。請將用戶提供的中文故事內容轉換為適合Stable Diffusion圖像生成的英文提示詞。
+
+要求：
+1. 提取故事中的核心視覺元素
+2. 轉換為簡潔的英文關鍵詞
+3. 按重要性排序，最重要的放前面
+4. 包含畫面風格、色彩、情境等描述
+5. 避免過於複雜的句子，使用逗號分隔的關鍵詞
+6. 長度控制在50-80個英文單詞內
+
+格式範例：
+主要對象, 動作/狀態, 環境/背景, 色彩風格, 畫面質量詞
+
+請只返回英文提示詞，不要解釋。"""
+
+        user_prompt = f"""
+        故事內容：{story_text}
+        
+        請轉換為Stable Diffusion圖像生成提示詞：
+        """
+        
+        # 使用 Ollama 進行轉換
+        converted_prompt = ollama_generate(system_prompt, user_prompt, "qwen2.5:14b")
+        
+        if not converted_prompt:
+            # 如果 Ollama 失敗，使用簡單的關鍵詞提取
+            converted_prompt = extract_visual_keywords(story_text)
+        
+        # 添加質量增強詞
+        enhanced_prompt = f"{converted_prompt}, masterpiece, best quality, highly detailed, cinematic lighting, beautiful composition"
+        
+        logger.info(f"故事轉換為提示詞: {enhanced_prompt[:100]}...")
+        return enhanced_prompt
+        
+    except Exception as e:
+        logger.error(f"故事轉提示詞失敗: {str(e)}")
+        return extract_visual_keywords(story_text)
+
+def extract_visual_keywords(text):
+    """簡單的視覺關鍵詞提取（備用方案）"""
+    # 中英對照的關鍵詞映射
+    keyword_map = {
+        # 人物
+        '女孩': 'girl', '男孩': 'boy', '女人': 'woman', '男人': 'man',
+        '公主': 'princess', '王子': 'prince', '天使': 'angel',
+        
+        # 動作
+        '飛行': 'flying', '漂浮': 'floating', '跳舞': 'dancing', '奔跑': 'running',
+        '游泳': 'swimming', '行走': 'walking', '坐著': 'sitting',
+        
+        # 環境
+        '海洋': 'ocean', '大海': 'sea', '天空': 'sky', '雲朵': 'clouds',
+        '森林': 'forest', '山': 'mountain', '城堡': 'castle', '花園': 'garden',
+        '房間': 'room', '橋': 'bridge', '島嶼': 'island',
+        
+        # 色彩
+        '藍色': 'blue', '紅色': 'red', '綠色': 'green', '黃色': 'yellow',
+        '紫色': 'purple', '白色': 'white', '黑色': 'black', '金色': 'golden',
+        '彩虹': 'rainbow', '閃光': 'glowing', '明亮': 'bright',
+        
+        # 情境
+        '夢境': 'dreamlike', '幻想': 'fantasy', '魔法': 'magical', '神秘': 'mysterious',
+        '美麗': 'beautiful', '優雅': 'elegant', '浪漫': 'romantic',
+        '日落': 'sunset', '夜晚': 'night', '星空': 'starry sky'
+    }
+    
+    extracted_keywords = []
+    text_lower = text.lower()
+    
+    for chinese, english in keyword_map.items():
+        if chinese in text:
+            extracted_keywords.append(english)
+    
+    if not extracted_keywords:
+        extracted_keywords = ['dreamlike scene', 'fantasy', 'beautiful']
+    
+    return ', '.join(extracted_keywords[:8])  # 最多8個關鍵詞
+
+# ==================== 快速圖像生成 ====================
+
+def generate_image_fast_local(story_text):
+    """快速本地圖像生成"""
     try:
         # 確保模型已載入
-        if not initialize_framepack_models():
-            logger.error("FramePack 模型未能正確初始化")
+        if not initialize_local_models():
+            logger.error("本地模型初始化失敗")
+            return create_default_image(f"error_{int(time.time())}.png", story_text)
+        
+        # 將故事轉換為圖像提示詞
+        image_prompt = story_to_image_prompt(story_text)
+        
+        logger.info(f"開始生成圖像，提示詞: {image_prompt[:50]}...")
+        
+        # 生成參數（針對速度優化）
+        generation_params = {
+            "prompt": image_prompt,
+            "negative_prompt": "blurry, low quality, distorted, ugly, bad anatomy, deformed, watermark, signature",
+            "num_inference_steps": 20,  # 減少步數提升速度
+            "guidance_scale": 7.5,
+            "width": 512,  # 標準尺寸
+            "height": 512,
+            "generator": torch.Generator().manual_seed(42)  # 固定種子確保一致性
+        }
+        
+        # 生成圖像
+        start_time = time.time()
+        result = image_pipe(**generation_params)
+        generation_time = time.time() - start_time
+        
+        logger.info(f"圖像生成完成，耗時: {generation_time:.2f}秒")
+        
+        # 保存圖像
+        timestamp = int(time.time())
+        random_id = str(uuid.uuid4())[:8]
+        output_filename = f"dream_{timestamp}_{random_id}.png"
+        
+        output_dir = os.path.join(static_dir, 'images')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, output_filename)
+        
+        result.images[0].save(output_path)
+        
+        logger.info(f"✅ 圖像保存成功: {output_filename}")
+        return os.path.join('images', output_filename)
+        
+    except Exception as e:
+        logger.error(f"快速圖像生成失敗: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return create_default_image(f"error_{int(time.time())}.png", story_text)
+
+# ==================== 快速視頻生成 ====================
+
+def generate_video_fast_local(image_path, story_text):
+    """快速本地視頻生成"""
+    try:
+        # 確保模型已載入
+        if not initialize_local_models():
+            logger.error("本地模型初始化失敗")
             return None
         
-        logger.info("開始使用 FramePack 直接生成視頻...")
+        # 載入圖像
+        full_image_path = os.path.join(static_dir, image_path)
+        input_image = Image.open(full_image_path)
         
-        # 導入必要的處理函數
-        import torch
-        from diffusers_helper.hunyuan import encode_prompt_conds, vae_decode, vae_encode
-        from diffusers_helper.utils import save_bcthw_as_mp4, crop_or_pad_yield_mask, resize_and_center_crop, generate_timestamp
-        from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
-        from diffusers_helper.clip_vision import hf_clip_vision_encode
-        from diffusers_helper.bucket_tools import find_nearest_bucket
+        # 調整圖像尺寸（SVD 需要特定尺寸）
+        input_image = input_image.resize((1024, 576), Image.Resampling.LANCZOS)
         
-        # 創建輸出目錄
-        output_dir = os.path.join(static_dir, 'videos')
-        os.makedirs(output_dir, exist_ok=True)
+        logger.info("開始生成視頻...")
         
-        # 生成唯一檔案名
+        # 生成參數（針對速度優化）
+        video_params = {
+            "image": input_image,
+            "decode_chunk_size": 8,  # 減少記憶體使用
+            "generator": torch.Generator().manual_seed(42),
+            "motion_bucket_id": 127,  # 中等運動強度
+            "noise_aug_strength": 0.1,  # 較低的噪聲增強
+            "num_frames": 14,  # 較少幀數（約0.6秒@25fps）
+        }
+        
+        start_time = time.time()
+        frames = video_pipe(**video_params).frames[0]
+        generation_time = time.time() - start_time
+        
+        logger.info(f"視頻幀生成完成，耗時: {generation_time:.2f}秒")
+        
+        # 保存視頻
         timestamp = int(time.time())
         random_id = str(uuid.uuid4())[:8]
         output_filename = f"dream_video_{timestamp}_{random_id}.mp4"
+        
+        output_dir = os.path.join(static_dir, 'videos')
+        os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_filename)
         
-        # 載入和處理輸入圖像
-        full_image_path = os.path.join(static_dir, image_path)
-        input_image = np.array(Image.open(full_image_path))
+        # 使用 OpenCV 保存視頻（更快）
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, 8.0, (1024, 576))  # 8 FPS
         
-        logger.info(f"處理圖像: {input_image.shape}")
+        for frame in frames:
+            frame_array = np.array(frame)
+            frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+            out.write(frame_bgr)
         
-        # 調整圖像尺寸
-        H, W, C = input_image.shape
-        height, width = find_nearest_bucket(H, W, resolution=640)
-        input_image_np = resize_and_center_crop(input_image, target_width=width, target_height=height)
+        out.release()
         
-        # 轉換為 PyTorch 張量
-        input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
-        input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
-        
-        # 獲取模型
-        models = framepack_models
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # 文本編碼
-        logger.info("進行文本編碼...")
-        
-        # 移動文本編碼器到 GPU（如果可用）
-        if device.type == 'cuda':
-            models['text_encoder'].to(device)
-            models['text_encoder_2'].to(device)
-        
-        llama_vec, clip_l_pooler = encode_prompt_conds(
-            prompt, models['text_encoder'], models['text_encoder_2'], 
-            models['tokenizer'], models['tokenizer_2']
-        )
-        
-        # 負面提示詞（空）
-        llama_vec_n, clip_l_pooler_n = encode_prompt_conds(
-            "", models['text_encoder'], models['text_encoder_2'], 
-            models['tokenizer'], models['tokenizer_2']
-        )
-        
-        # 處理文本向量
-        llama_vec, llama_attention_mask = crop_or_pad_yield_mask(llama_vec, length=512)
-        llama_vec_n, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
-        
-        # VAE 編碼
-        logger.info("進行 VAE 編碼...")
-        if device.type == 'cuda':
-            models['vae'].to(device)
-        
-        start_latent = vae_encode(input_image_pt, models['vae'])
-        
-        # CLIP Vision 編碼
-        logger.info("進行 CLIP Vision 編碼...")
-        if device.type == 'cuda':
-            models['image_encoder'].to(device)
-        
-        image_encoder_output = hf_clip_vision_encode(
-            input_image_np, models['feature_extractor'], models['image_encoder']
-        )
-        image_encoder_last_hidden_state = image_encoder_output.last_hidden_state
-        
-        # 類型轉換
-        transformer_dtype = models['transformer'].dtype
-        llama_vec = llama_vec.to(transformer_dtype)
-        llama_vec_n = llama_vec_n.to(transformer_dtype)
-        clip_l_pooler = clip_l_pooler.to(transformer_dtype)
-        clip_l_pooler_n = clip_l_pooler_n.to(transformer_dtype)
-        image_encoder_last_hidden_state = image_encoder_last_hidden_state.to(transformer_dtype)
-        
-        # 採樣參數（簡化版）
-        logger.info("開始視頻生成採樣...")
-        
-        if device.type == 'cuda':
-            models['transformer'].to(device)
-        
-        # 簡化的採樣參數
-        seed = 31337
-        steps = 20  # 減少步數以節省時間
-        cfg = 1.0
-        gs = 10.0
-        rs = 0.0
-        num_frames = 33  # 約1秒的視頻（30fps）
-        
-        rnd = torch.Generator("cpu").manual_seed(seed)
-        
-        # 創建採樣所需的索引和潛在變量
-        latent_window_size = 9
-        indices = torch.arange(0, sum([1, 0, latent_window_size, 1, 2, 16])).unsqueeze(0)
-        clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split([1, 0, latent_window_size, 1, 2, 16], dim=1)
-        clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
-        
-        # 準備清潔潛在變量
-        clean_latents_pre = start_latent.to(device)
-        clean_latents_post = torch.zeros(1, 16, 1, height // 8, width // 8, device=device, dtype=transformer_dtype)
-        clean_latents_2x = torch.zeros(1, 16, 2, height // 8, width // 8, device=device, dtype=transformer_dtype)
-        clean_latents_4x = torch.zeros(1, 16, 16, height // 8, width // 8, device=device, dtype=transformer_dtype)
-        clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
-        
-        # 進行採樣
-        generated_latents = sample_hunyuan(
-            transformer=models['transformer'],
-            sampler='unipc',
-            width=width,
-            height=height,
-            frames=num_frames,
-            real_guidance_scale=cfg,
-            distilled_guidance_scale=gs,
-            guidance_rescale=rs,
-            num_inference_steps=steps,
-            generator=rnd,
-            prompt_embeds=llama_vec,
-            prompt_embeds_mask=llama_attention_mask,
-            prompt_poolers=clip_l_pooler,
-            negative_prompt_embeds=llama_vec_n,
-            negative_prompt_embeds_mask=llama_attention_mask_n,
-            negative_prompt_poolers=clip_l_pooler_n,
-            device=device,
-            dtype=transformer_dtype,
-            image_embeddings=image_encoder_last_hidden_state,
-            latent_indices=latent_indices,
-            clean_latents=clean_latents,
-            clean_latent_indices=clean_latent_indices,
-            clean_latents_2x=clean_latents_2x,
-            clean_latent_2x_indices=clean_latent_2x_indices,
-            clean_latents_4x=clean_latents_4x,
-            clean_latent_4x_indices=clean_latent_4x_indices,
-            callback=None,  # 簡化版本不使用回調
-        )
-        
-        # 將起始潛在變量添加到生成的潛在變量
-        final_latents = torch.cat([start_latent.to(generated_latents), generated_latents], dim=2)
-        
-        # VAE 解碼
-        logger.info("進行 VAE 解碼...")
-        history_pixels = vae_decode(final_latents, models['vae']).cpu()
-        
-        # 保存為 MP4
-        logger.info(f"保存視頻到: {output_path}")
-        save_bcthw_as_mp4(history_pixels, output_path, fps=30, crf=16)
-        
-        # 移動模型回 CPU 以節省記憶體
-        if not models['high_vram']:
-            models['text_encoder'].cpu()
-            models['text_encoder_2'].cpu()
-            models['vae'].cpu()
-            models['image_encoder'].cpu()
-            models['transformer'].cpu()
-        
-        logger.info("✅ FramePack 視頻生成完成")
+        logger.info(f"✅ 視頻保存成功: {output_filename}")
         return os.path.join('videos', output_filename)
         
-    except ImportError as e:
-        logger.error(f"FramePack 模塊導入錯誤: {str(e)}")
-        return None
-    except RuntimeError as e:
-        if "out of memory" in str(e):
-            logger.error("GPU 記憶體不足，嘗試使用較小的參數或升級硬體")
-        else:
-            logger.error(f"FramePack 運行時錯誤: {str(e)}")
-        return None
     except Exception as e:
-        logger.error(f"FramePack 視頻生成失敗: {str(e)}")
+        logger.error(f"快速視頻生成失敗: {str(e)}")
         import traceback
         traceback.print_exc()
         return None
@@ -364,46 +304,17 @@ def generate_video_with_framepack_direct(image_path, prompt):
 # ==================== 其他輔助函數 ====================
 
 def check_local_services():
-    """檢查本地服務和路徑狀態"""
+    """檢查本地服務狀態"""
     try:
-        # 檢查Ollama
+        # 檢查 Ollama
         ollama_response = requests.get("http://localhost:11434/api/tags", timeout=5)
         ollama_status = ollama_response.status_code == 200
         logger.info(f"Ollama API 狀態: {'正常' if ollama_status else '異常'}")
         
-        # 檢查Fooocus路徑和文件
-        fooocus_status = os.path.exists(FOOOCUS_PATH)
-        fooocus_executable = False
-        if fooocus_status:
-            fooocus_main_files = [
-                os.path.join(FOOOCUS_PATH, "launch.py"),
-                os.path.join(FOOOCUS_PATH, "webui.py"),
-                os.path.join(FOOOCUS_PATH, "main.py"),
-                os.path.join(FOOOCUS_PATH, "entry_with_update.py")
-            ]
-            for file_path in fooocus_main_files:
-                if os.path.exists(file_path):
-                    fooocus_executable = True
-                    logger.info(f"找到Fooocus執行文件: {os.path.basename(file_path)}")
-                    break
+        # 檢查本地模型狀態
+        local_models_status = models_loaded or initialize_local_models()
         
-        # 檢查FramePack路徑和核心文件
-        framepack_status = os.path.exists(FRAMEPACK_PATH)
-        framepack_executable = False
-        if framepack_status:
-            framepack_main_file = os.path.join(FRAMEPACK_PATH, "demo_gradio.py")
-            framepack_core_files = [
-                os.path.join(FRAMEPACK_PATH, "diffusers_helper"),
-                framepack_main_file
-            ]
-            
-            if all(os.path.exists(f) for f in framepack_core_files):
-                framepack_executable = True
-                logger.info("找到FramePack核心文件: demo_gradio.py 和 diffusers_helper")
-            else:
-                logger.warning("FramePack文件不完整")
-        
-        return ollama_status, fooocus_status and fooocus_executable, framepack_status and framepack_executable
+        return ollama_status, True, local_models_status  # fooocus_status 設為 True（不再使用）
     except Exception as e:
         logger.error(f"服務檢查失敗: {str(e)}")
         return False, False, False
@@ -519,155 +430,69 @@ def translate_to_english(text):
         logger.error(f"翻譯過程中發生錯誤: {str(e)}")
         return "dreamlike scene, floating, ocean, sunlight, surreal atmosphere"
 
-def generate_image_with_fooocus(prompt):
-    """使用本地Fooocus生成圖像 - 修正版本"""
+def analyze_dream(image_path, video_path, text):
+    """使用Ollama分析夢境的心理意義"""
     try:
-        # 創建輸出目錄
-        output_dir = os.path.join(static_dir, 'images')
-        os.makedirs(output_dir, exist_ok=True)
+        system_prompt = """請用台灣習慣的中文回覆。你是一位專業的夢境與心理分析專家，擅長解讀夢境的象徵意義和潛在的心理訊息。
+        請根據使用者描述的夢境提供深入的心理分析和建議。請用台灣習慣的中文回覆，避免使用過多心理學專業術語，確保回答通俗易懂。"""
         
-        # 生成唯一的檔案名
-        timestamp = int(time.time())
-        random_id = str(uuid.uuid4())[:8]
-        output_filename = f"dream_{timestamp}_{random_id}.png"
+        user_prompt = f"""
+        以下是使用者描述的夢境：
         
-        # 簡化和清理提示詞
-        clean_prompt = prompt.replace('\n', ' ').replace('\r', ' ')[:200]  # 限制長度
-        enhanced_prompt = f"{clean_prompt}, dreamlike, surreal, fantasy, high quality"
+        夢境描述: {text}
         
-        logger.info(f"使用本地Fooocus生成圖像，簡化提示詞：{enhanced_prompt[:50]}...")
+        請分析這個夢境可能揭示的心理狀態、潛意識願望或恐懼，以及可能的象徵意義。提供心理學觀點的解讀，
+        以及對使用者當前生活狀態的可能啟示和建議。分析長度控制在150-200字左右。請使用溫和、支持性的語調。
+        """
         
-        # 檢查Fooocus可執行文件
-        main_file = None
-        fooocus_main_files = [
-            os.path.join(FOOOCUS_PATH, "launch.py"),
-            os.path.join(FOOOCUS_PATH, "webui.py"),
-            os.path.join(FOOOCUS_PATH, "main.py"),
-            os.path.join(FOOOCUS_PATH, "entry_with_update.py")
-        ]
+        analysis = ollama_generate(system_prompt, user_prompt, "qwen2.5:14b")
         
-        for file_path in fooocus_main_files:
-            if os.path.exists(file_path):
-                main_file = file_path
-                break
-        
-        if not main_file:
-            logger.error("找不到Fooocus主執行文件")
-            return create_default_image(output_filename, prompt)
-        
-        # 創建臨時輸出目錄
-        temp_output_dir = os.path.join(FOOOCUS_PATH, "outputs")
-        os.makedirs(temp_output_dir, exist_ok=True)
-        
-        # 方法1：嘗試啟動Fooocus服務並通過API調用
-        try:
-            # 先檢查是否已經有Fooocus服務在運行
-            try:
-                api_response = requests.get("http://localhost:7865/", timeout=2)
-                if api_response.status_code == 200:
-                    logger.info("檢測到Fooocus服務正在運行，嘗試API調用")
-                    return generate_via_fooocus_api(enhanced_prompt, output_filename)
-            except:
-                pass
-            
-            # 如果沒有服務運行，啟動Fooocus（僅啟動服務，不直接生成）
-            logger.info("啟動Fooocus服務...")
-            fooocus_cmd = [
-                sys.executable, main_file,
-                "--listen", "127.0.0.1",
-                "--port", "7865",
-                "--output-path", temp_output_dir
-            ]
-            
-            # 在背景啟動Fooocus服務
-            process = subprocess.Popen(fooocus_cmd, cwd=FOOOCUS_PATH, 
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # 等待服務啟動（最多30秒）
-            for i in range(30):
-                try:
-                    test_response = requests.get("http://localhost:7865/", timeout=1)
-                    if test_response.status_code == 200:
-                        logger.info(f"Fooocus服務啟動成功（{i+1}秒）")
-                        break
-                except:
-                    time.sleep(1)
-            else:
-                logger.warning("Fooocus服務啟動超時，使用預設圖像")
-                process.terminate()
-                return create_default_image(output_filename, prompt)
-            
-            # 服務啟動成功，嘗試通過API生成圖像
-            result = generate_via_fooocus_api(enhanced_prompt, output_filename)
-            
-            # 生成完成後關閉服務
-            try:
-                process.terminate()
-                process.wait(timeout=5)
-            except:
-                process.kill()
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Fooocus服務啟動失敗: {str(e)}")
-            return create_default_image(output_filename, prompt)
+        return analysis if analysis else "暫時無法進行心理分析，請稍後再試。"
     
     except Exception as e:
-        logger.error(f"Fooocus圖像生成過程發生錯誤: {str(e)}")
-        return create_default_image(f"error_{int(time.time())}.png", prompt)
+        logger.error(f"夢境分析過程中發生錯誤: {str(e)}")
+        return "心理分析功能暫時不可用，但您的夢境描述很有趣，建議您記錄下來以便日後回顧。"
 
-def generate_via_fooocus_api(prompt, output_filename):
-    """通過Fooocus API生成圖像"""
+def ollama_generate(system_prompt, user_prompt, model="qwen2.5:14b"):
+    """使用Ollama API生成文本"""
     try:
-        api_url = "http://localhost:7865/v1/generation/text-to-image"
-        
-        payload = {
-            "prompt": prompt,
-            "negative_prompt": "blurry, low quality, deformed",
-            "style_selections": ["Fooocus V2"],
-            "performance_selection": "Speed",
-            "aspect_ratios_selection": "1152×896",
-            "image_number": 1,
-            "image_seed": -1,
-            "sharpness": 2.0,
-            "guidance_scale": 4.0,
-            "base_model_name": "juggernautXL_v45.safetensors",
-            "refiner_model_name": "None",
-            "refiner_switch": 0.5,
-            "loras": [],
-            "advanced_params": {},
-            "require_base64": True,
-            "async_process": False
+        data = {
+            "model": model,
+            "prompt": user_prompt,
+            "system": system_prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": 500,
+                "stop": ["Human:", "Assistant:", "用戶:", "助手:"]
+            }
         }
         
-        logger.info("發送API請求到Fooocus...")
-        response = requests.post(api_url, json=payload, timeout=120)
+        logger.info(f"發送Ollama請求，模型: {model}")
+        response = requests.post(OLLAMA_API, json=data, timeout=120)
         
         if response.status_code == 200:
             result = response.json()
-            if result and "images" in result and len(result["images"]) > 0:
-                # 解碼base64圖像
-                image_data = result["images"][0]
-                if image_data.startswith('data:image/'):
-                    image_data = image_data.split(',', 1)[1]
-                
-                # 保存圖像
-                output_dir = os.path.join(static_dir, 'images')
-                output_path = os.path.join(output_dir, output_filename)
-                
-                with open(output_path, "wb") as f:
-                    f.write(base64.b64decode(image_data))
-                
-                logger.info(f"成功通過Fooocus API生成圖像: {output_filename}")
-                return os.path.join('images', output_filename)
-        
-        logger.error(f"Fooocus API調用失敗: {response.status_code}")
-        return create_default_image(output_filename, prompt)
-        
+            generated_text = result.get("response", "").strip()
+            if generated_text:
+                logger.info(f"Ollama成功生成文本，長度: {len(generated_text)}")
+                return generated_text
+            else:
+                logger.error("Ollama返回空文本")
+                return ""
+        else:
+            logger.error(f"Ollama API錯誤: {response.status_code}, {response.text}")
+            return ""
+    except requests.exceptions.Timeout:
+        logger.error("Ollama請求超時")
+        return ""
+    except requests.exceptions.ConnectionError:
+        logger.error("無法連接到Ollama服務")
+        return ""
     except Exception as e:
-        logger.error(f"Fooocus API調用出錯: {str(e)}")
-        return create_default_image(output_filename, prompt)
+        logger.error(f"Ollama請求錯誤: {str(e)}")
+        return ""
 
 def create_default_image(filename, prompt_text=""):
     """創建預設圖像"""
@@ -771,70 +596,6 @@ def create_default_image(filename, prompt_text=""):
         logger.error(f"創建預設圖像失敗: {str(e)}")
         return "images/default_dream.png"
 
-def analyze_dream(image_path, video_path, text):
-    """使用Ollama分析夢境的心理意義"""
-    try:
-        system_prompt = """請用台灣習慣的中文回覆。你是一位專業的夢境與心理分析專家，擅長解讀夢境的象徵意義和潛在的心理訊息。
-        請根據使用者描述的夢境提供深入的心理分析和建議。請用台灣習慣的中文回覆，避免使用過多心理學專業術語，確保回答通俗易懂。"""
-        
-        user_prompt = f"""
-        以下是使用者描述的夢境：
-        
-        夢境描述: {text}
-        
-        請分析這個夢境可能揭示的心理狀態、潛意識願望或恐懼，以及可能的象徵意義。提供心理學觀點的解讀，
-        以及對使用者當前生活狀態的可能啟示和建議。分析長度控制在150-200字左右。請使用溫和、支持性的語調。
-        """
-        
-        analysis = ollama_generate(system_prompt, user_prompt, "qwen2.5:14b")
-        
-        return analysis if analysis else "暫時無法進行心理分析，請稍後再試。"
-    
-    except Exception as e:
-        logger.error(f"夢境分析過程中發生錯誤: {str(e)}")
-        return "心理分析功能暫時不可用，但您的夢境描述很有趣，建議您記錄下來以便日後回顧。"
-
-def ollama_generate(system_prompt, user_prompt, model="qwen2.5:14b"):
-    """使用Ollama API生成文本"""
-    try:
-        data = {
-            "model": model,
-            "prompt": user_prompt,
-            "system": system_prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "num_predict": 500,
-                "stop": ["Human:", "Assistant:", "用戶:", "助手:"]
-            }
-        }
-        
-        logger.info(f"發送Ollama請求，模型: {model}")
-        response = requests.post(OLLAMA_API, json=data, timeout=120)
-        
-        if response.status_code == 200:
-            result = response.json()
-            generated_text = result.get("response", "").strip()
-            if generated_text:
-                logger.info(f"Ollama成功生成文本，長度: {len(generated_text)}")
-                return generated_text
-            else:
-                logger.error("Ollama返回空文本")
-                return ""
-        else:
-            logger.error(f"Ollama API錯誤: {response.status_code}, {response.text}")
-            return ""
-    except requests.exceptions.Timeout:
-        logger.error("Ollama請求超時")
-        return ""
-    except requests.exceptions.ConnectionError:
-        logger.error("無法連接到Ollama服務")
-        return ""
-    except Exception as e:
-        logger.error(f"Ollama請求錯誤: {str(e)}")
-        return ""
-
 def save_dream_result(data):
     """保存夢境分析結果以便分享"""
     try:
@@ -873,6 +634,32 @@ def save_dream_result(data):
         logger.error(f"保存分享數據時出錯: {str(e)}")
         return None
 
+# ==================== 記憶體管理 ====================
+
+def clear_model_memory():
+    """清理模型記憶體"""
+    global image_pipe, video_pipe, models_loaded
+    
+    import gc
+    
+    if image_pipe is not None:
+        del image_pipe
+        image_pipe = None
+    
+    if video_pipe is not None:
+        del video_pipe  
+        video_pipe = None
+    
+    models_loaded = False
+    gc.collect()
+    
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    
+    logger.info("模型記憶體已清理")
+
 # ==================== 路由定義 ====================
 
 @app.route('/')
@@ -882,14 +669,13 @@ def index():
 @app.route('/api/status')
 def api_status():
     """檢查服務狀態"""
-    ollama_status, fooocus_status, framepack_status = check_local_services()
+    ollama_status, fooocus_status, local_models_status = check_local_services()
     
     return jsonify({
         'ollama': ollama_status,
-        'fooocus': fooocus_status,
-        'framepack': framepack_status,
-        'fooocus_path': FOOOCUS_PATH,
-        'framepack_path': FRAMEPACK_PATH,
+        'fooocus': fooocus_status,  # 保持兼容性
+        'framepack': local_models_status,  # 現在指向本地模型
+        'local_models': local_models_status,
         'timestamp': int(time.time())
     })
 
@@ -908,7 +694,7 @@ def analyze():
         logger.info(f"開始處理夢境分析請求，輸入長度: {len(dream_text)}")
         
         # 檢查服務狀態
-        ollama_status, fooocus_status, framepack_status = check_local_services()
+        ollama_status, _, local_models_status = check_local_services()
         if not ollama_status:
             return jsonify({'error': 'Ollama服務不可用，請確認服務是否正常運行在 localhost:11434'}), 503
         
@@ -916,30 +702,30 @@ def analyze():
         logger.info("步驟1: 開始夢境故事生成")
         initial_story, story_feedback, final_story = dream_weaver(dream_text)
         
-        # 步驟2: 翻譯故事以便更好地生成圖像
+        # 步驟2: 翻譯故事以便更好地生成圖像（保留備用）
         logger.info("步驟2: 開始翻譯故事")
         translation = translate_to_english(final_story)
         
-        # 步驟3: 使用本地Fooocus生成圖像
+        # 步驟3: 使用本地快速模型生成圖像
         logger.info("步驟3: 開始生成圖像")
-        if fooocus_status:
-            image_path = generate_image_with_fooocus(translation)
+        if local_models_status:
+            image_path = generate_image_fast_local(final_story)
         else:
-            logger.warning("Fooocus不可用，使用預設圖像")
+            logger.warning("本地模型不可用，使用預設圖像")
             timestamp = int(time.time())
-            image_path = create_default_image(f"default_{timestamp}.png", translation)
+            image_path = create_default_image(f"default_{timestamp}.png", final_story)
         
-        # 步驟4: 使用直接整合的 FramePack 生成視頻
-        logger.info("步驟4: 開始生成視頻（直接整合版）")
+        # 步驟4: 使用本地快速模型生成視頻
+        logger.info("步驟4: 開始生成視頻")
         video_path = None
-        if framepack_status and image_path:
-            video_path = generate_video_with_framepack_direct(image_path, translation)
+        if local_models_status and image_path:
+            video_path = generate_video_fast_local(image_path, final_story)
             if video_path:
                 logger.info("✅ 視頻生成成功")
             else:
                 logger.warning("⚠️ 視頻生成失敗，但不影響其他功能")
         else:
-            logger.warning("FramePack不可用，跳過視頻生成")
+            logger.warning("本地模型不可用，跳過視頻生成")
         
         # 步驟5: 心理分析
         logger.info("步驟5: 開始心理分析")
@@ -956,14 +742,15 @@ def analyze():
             'psychologyAnalysis': psychology_analysis,
             'apiStatus': {
                 'ollama': ollama_status,
-                'fooocus': fooocus_status,
-                'framepack': framepack_status
+                'fooocus': True,  # 保持兼容性
+                'framepack': local_models_status,
+                'local_models': local_models_status
             },
             'processingInfo': {
                 'timestamp': int(time.time()),
                 'inputLength': len(dream_text),
                 'storyLength': len(final_story) if final_story else 0,
-                'useDirectIntegration': True
+                'useLocalModels': True
             }
         }
         
@@ -1046,6 +833,10 @@ def internal_error(error):
 
 if __name__ == '__main__':
     try:
+        # 在程式結束時清理記憶體
+        import atexit
+        atexit.register(clear_model_memory)
+        
         # 確保必要的目錄存在
         directories = [
             os.path.join(static_dir, 'images'),
@@ -1069,18 +860,30 @@ if __name__ == '__main__':
         
         # 檢查服務狀態
         logger.info("檢查服務狀態...")
-        ollama_status, fooocus_status, framepack_status = check_local_services()
+        ollama_status, _, local_models_status = check_local_services()
         
         # 輸出狀態報告
         print("=" * 80)
-        print("夢境編織者系統 - 直接整合版本 啟動狀態報告")
+        print("夢境編織者系統 - 本地快速生成版本 啟動狀態報告")
         print("=" * 80)
         print(f"Ollama API (localhost:11434): {'✅ 正常' if ollama_status else '❌ 異常'}")
-        print(f"Fooocus 路徑: {FOOOCUS_PATH}")
-        print(f"Fooocus 狀態: {'✅ 可用' if fooocus_status else '❌ 不可用'}")
-        print(f"FramePack 路徑: {FRAMEPACK_PATH}")
-        print(f"FramePack 狀態: {'✅ 可用（直接整合）' if framepack_status else '❌ 不可用'}")
+        print(f"本地圖像生成模型: {'✅ 可用' if local_models_status else '❌ 不可用'}")
+        print(f"本地視頻生成模型: {'✅ 可用' if local_models_status else '❌ 不可用'}")
         print(f"靜態檔案目錄: {static_dir}")
+        
+        # 檢查 PyTorch 和設備支持
+        if torch.backends.mps.is_available():
+            print("✅ 已啟用 Metal Performance Shaders (MPS) 加速")
+            device_info = "MPS (Apple Silicon 優化)"
+        elif torch.cuda.is_available():
+            print("✅ 已啟用 CUDA 加速")
+            device_info = "CUDA"
+        else:
+            print("⚠️  使用 CPU 模式，速度可能較慢")
+            device_info = "CPU"
+        
+        print(f"PyTorch 版本: {torch.__version__}")
+        print(f"使用設備: {device_info}")
         print("=" * 80)
         
         # 詳細的狀態說明和建議
@@ -1090,40 +893,47 @@ if __name__ == '__main__':
             print("   啟動命令: ollama serve")
             print()
         
-        if not fooocus_status:
-            print("❌ 警告: Fooocus 不可用")
-            print(f"   當前設定路徑: {FOOOCUS_PATH}")
-            print("   圖像生成將使用預設圖像")
-            print("   請檢查 Fooocus 安裝和路徑設定")
-            print()
-        
-        if not framepack_status:
-            print("❌ 警告: FramePack 不可用（直接整合模式）")
-            print(f"   當前設定路徑: {FRAMEPACK_PATH}")
-            print("   視頻生成功能將不可用")
-            print("   請檢查:")
-            print("   1. FramePack 路徑是否正確")
-            print("   2. 是否有 demo_gradio.py 和 diffusers_helper 目錄")
-            print("   3. FramePack 依賴是否已安裝")
+        if not local_models_status:
+            print("❌ 警告: 本地生成模型不可用")
+            print("   首次運行時會自動下載模型（約 4-6GB）")
+            print("   請確保網路連接正常且有足夠的儲存空間")
+            print("   模型下載完成後即可離線使用")
             print()
         
         # 系統功能說明
         print("🔧 系統功能狀態:")
         print(f"   • 故事生成: {'✅ 可用 (Ollama)' if ollama_status else '❌ 不可用'}")
         print(f"   • 文本翻譯: {'✅ 可用 (Ollama)' if ollama_status else '❌ 不可用'}")
-        print(f"   • 圖像生成: {'✅ 可用 (本地Fooocus)' if fooocus_status else '⚠️  預設圖像'}")
-        print(f"   • 視頻生成: {'✅ 可用 (直接整合FramePack)' if framepack_status else '❌ 不可用'}")
+        print(f"   • 圖像生成: {'✅ 可用 (Stable Diffusion v1.5)' if local_models_status else '⚠️  預設圖像'}")
+        print(f"   • 視頻生成: {'✅ 可用 (Stable Video Diffusion)' if local_models_status else '❌ 不可用'}")
         print(f"   • 心理分析: {'✅ 可用 (Ollama)' if ollama_status else '❌ 不可用'}")
+        print(f"   • 故事轉提示詞: {'✅ 可用 (智能轉換)' if ollama_status else '⚠️  關鍵詞提取'}")
         print()
         
         # 特殊說明
-        print("🚀 直接整合特性:")
-        if framepack_status:
-            print("   • FramePack 模型將在首次使用時自動載入")
-            print("   • 視頻生成完全整合，無需額外的 Web 界面")
-            print("   • 自動記憶體管理和 GPU 優化")
+        print("🚀 本地快速生成特性:")
+        if local_models_status:
+            print("   • 圖像生成: 10-25 秒（512x512）")
+            print("   • 視頻生成: 30 秒-2 分鐘（0.6 秒@8fps）")
+            print("   • 智能故事轉圖像提示詞")
+            print("   • 完全離線運行（首次下載後）")
+            print("   • 自動設備優化（MPS/CUDA/CPU）")
         print("   • 所有功能通過統一界面使用")
         print("   • 完整的錯誤處理和日誌記錄")
+        print("   • 自動記憶體管理")
+        print()
+        
+        # 性能預期
+        print("⚡ 性能預期:")
+        if device_info == "MPS (Apple Silicon 優化)":
+            print("   • M1/M2/M3/M4 優化，速度較快")
+            print("   • 記憶體使用: 4-8GB")
+        elif device_info == "CUDA":
+            print("   • GPU 加速，速度最快")
+            print("   • 記憶體使用: 4-6GB VRAM")
+        else:
+            print("   • CPU 模式，速度較慢但功能完整")
+            print("   • 記憶體使用: 6-12GB RAM")
         print()
         
         # 最低運行要求
@@ -1142,7 +952,9 @@ if __name__ == '__main__':
         
     except KeyboardInterrupt:
         logger.info("用戶中斷，正在關閉系統...")
+        clear_model_memory()
     except Exception as e:
         logger.error(f"系統啟動失敗: {str(e)}")
         import traceback
         traceback.print_exc()
+        clear_model_memory()
