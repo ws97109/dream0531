@@ -17,19 +17,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     if (!dreamInput || !dreamForm) return;
     
-    // 處理進度的步驟
+    // 處理進度的步驟（簡化版本）
     const steps = [
-        { status: '正在分析夢境元素...', detail: '識別關鍵元素與象徵意義', progress: 5 },
-        { status: '正在生成故事架構...', detail: '創建可能的故事架構並選擇最佳方案', progress: 15 },
-        { status: '正在創作初步故事...', detail: '融合夢境元素創作初稿', progress: 25 },
-        { status: '正在評估故事品質...', detail: '檢查元素融合度與故事連貫性', progress: 35 },
-        { status: '正在優化故事內容...', detail: '根據評估反饋完善故事', progress: 45 },
-        { status: '正在翻譯故事...', detail: '翻譯為英文以提升圖像生成品質', progress: 55 },
-        { status: '正在準備圖像生成...', detail: '準備生成參數與提示詞', progress: 60 },
-        { status: '正在生成視覺圖像...', detail: '使用 Fooocus AI 創建夢境視覺化圖像', progress: 70 },
-        { status: '正在等待圖像生成...', detail: '這可能需要一些時間，請耐心等待', progress: 75 },
-        { status: '正在創建夢境視頻...', detail: '使用 FramePack 製作夢境動態影像', progress: 85 },
-        { status: '正在進行心理分析...', detail: '根據夢境內容、圖像和視頻進行深度分析', progress: 95 },
+        { status: '正在分析夢境元素...', detail: '識別關鍵元素與象徵意義', progress: 10 },
+        { status: '正在創作夢境故事...', detail: '融合夢境元素創作完整故事', progress: 30 },
+        { status: '正在生成視覺圖像...', detail: '使用 Stable Diffusion 創建夢境視覺化圖像', progress: 70 },
+        { status: '正在進行心理分析...', detail: '根據夢境內容進行深度分析', progress: 95 },
         { status: '完成！', detail: '您的夢境分析結果已經準備好', progress: 100 }
     ];
     
@@ -153,14 +146,14 @@ document.addEventListener('DOMContentLoaded', function() {
             progressBar.setAttribute('aria-valuenow', step.progress);
             
             // 圖像生成步驟需要停留更長時間
-            if (step.status.includes('生成視覺圖像') || step.status.includes('等待圖像生成')) {
+            if (step.status.includes('生成視覺圖像')) {
                 setTimeout(function() {
                     currentStep++;
                 }, 2000); // 多等待2秒
             } else {
                 currentStep++;
             }
-        }, 1000);
+        }, 1200); // 稍微調慢進度條速度
         
         // 發送API請求
         fetch('/api/analyze', {
@@ -196,7 +189,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     analyzeBtn.disabled = false;
                     if (results) results.style.display = 'block';
                 }, 500);
-            }, Math.max(0, steps.length * 1000 - 1000));
+            }, Math.max(0, steps.length * 1200 - 1200));
         })
         .catch(error => {
             clearInterval(progressInterval);
@@ -208,15 +201,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // 顯示結果
+    // 顯示結果（簡化版本）
     function displayResults(data) {
         if (!results) return;
         
-        // 填充結果
-        document.getElementById('initial-story').textContent = data.initialStory;
-        document.getElementById('story-feedback').textContent = data.storyFeedback;
+        // 只填充完整故事、圖像和心理分析
         document.getElementById('final-story').textContent = data.finalStory;
-        document.getElementById('translation').textContent = data.translation;
         document.getElementById('psychology-analysis').textContent = data.psychologyAnalysis;
         
         // 設置圖像
@@ -227,16 +217,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             dreamImage.src = '/static/images/default_dream.png';
             dreamImage.alt = '未能生成夢境圖像';
-        }
-        
-        // 設置視頻
-        const dreamVideo = document.getElementById('dream-video');
-        if (dreamVideo && data.videoPath) {
-            const videoSource = dreamVideo.querySelector('source');
-            if (videoSource) {
-                videoSource.src = data.videoPath;
-                dreamVideo.load(); // 重新加載視頻
-            }
         }
     }
 });
