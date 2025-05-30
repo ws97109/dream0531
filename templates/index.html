@@ -16,14 +16,57 @@
                                 rows="5" placeholder="例如：我夢見自己在飛行，下方是一片湛藍的大海，突然看到一座閃閃發光的城堡..." required></textarea>
                             <div class="form-text" id="char-count">0 個字</div>
                         </div>
+                        
+                        <!-- 影片生成設定區塊 -->
                         <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" value="" id="generate-video-checkbox">
-                                <label class="form-check-label" for="generate-video-checkbox">
-                                    🎬 同時生成夢境影片（需要額外 1-3 分鐘）
-                                </label>
+                            <div class="card border-info">
+                                <div class="card-body">
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" value="" id="generate-video-checkbox">
+                                        <label class="form-check-label" for="generate-video-checkbox">
+                                            🎬 <strong>生成夢境影片</strong>（需要額外 1-5 分鐘）
+                                        </label>
+                                    </div>
+                                    
+                                    <!-- 影片設定選項 -->
+                                    <div id="video-settings" style="display: none;">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <label for="video-length" class="form-label">影片長度：<span id="video-length-display">5</span> 秒</label>
+                                                <input type="range" class="form-range" id="video-length" min="3" max="15" value="5" step="1">
+                                                <div class="form-text">
+                                                    <small>
+                                                        <span class="text-success">3-5秒：快速預覽</span> | 
+                                                        <span class="text-warning">6-10秒：標準長度</span> | 
+                                                        <span class="text-danger">11-15秒：高質量（較慢）</span>
+                                                    </small>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label for="video-quality" class="form-label">影片品質</label>
+                                                <select class="form-select" id="video-quality">
+                                                    <option value="fast">快速模式（較低品質）</option>
+                                                    <option value="standard" selected>標準模式（平衡）</option>
+                                                    <option value="high">高品質模式（較慢）</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- 預估時間顯示 -->
+                                        <div class="mt-3">
+                                            <div class="alert alert-info">
+                                                <i class="bi bi-clock"></i> 
+                                                <strong>預估生成時間：</strong>
+                                                <span id="estimated-time">約 2-3 分鐘</span>
+                                                <br>
+                                                <small class="text-muted">實際時間取決於您的 GPU 效能</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
+                        
                         <div class="text-center">
                             <button type="submit" class="btn btn-primary" id="analyze-btn">開始分析</button>
                         </div>
@@ -86,13 +129,13 @@
             <div class="col-md-12" id="video-section" style="display: none;">
                 <div class="card mb-4">
                     <div class="card-header bg-info text-white">
-                        <h5 class="mb-0">🎬 夢境影片</h5>
+                        <h5 class="mb-0">🎬 夢境影片 <span id="video-info-badge" class="badge bg-light text-dark ms-2"></span></h5>
                     </div>
                     <div class="card-body text-center">
                         <video id="dream-video" class="img-fluid rounded" controls style="max-width: 100%; max-height: 400px;">
                             您的瀏覽器不支援影片播放
                         </video>
-                        <div class="text-muted small mt-2">由 Stable Video Diffusion 生成</div>
+                        <div class="text-muted small mt-2">由 FramePack 生成</div>
                     </div>
                 </div>
             </div>
@@ -157,20 +200,91 @@
         const shareFacebookBtn = $('#share-facebook-btn');
         const shareTwitterBtn = $('#share-twitter-btn');
         const generateVideoCheckbox = $('#generate-video-checkbox');
+        const videoSettings = $('#video-settings');
+        const videoLengthSlider = $('#video-length');
+        const videoLengthDisplay = $('#video-length-display');
+        const videoQualitySelect = $('#video-quality');
+        const estimatedTimeSpan = $('#estimated-time');
         
         // 防重複提交狀態
         let isProcessing = false;
         
-        // 處理進度的步驟（根據是否生成影片動態調整）
-        function getSteps(includeVideo) {
+        // 影片設定相關事件
+        generateVideoCheckbox.on('change', function() {
+            if (this.checked) {
+                videoSettings.slideDown();
+                updateEstimatedTime();
+            } else {
+                videoSettings.slideUp();
+            }
+        });
+        
+        // 影片長度滑桿事件
+        videoLengthSlider.on('input', function() {
+            const length = $(this).val();
+            videoLengthDisplay.text(length);
+            updateEstimatedTime();
+        });
+        
+        // 影片品質選擇事件
+        videoQualitySelect.on('change', function() {
+            updateEstimatedTime();
+        });
+        
+        // 更新預估時間
+        function updateEstimatedTime() {
+            const length = parseInt(videoLengthSlider.val());
+            const quality = videoQualitySelect.val();
+            
+            let baseTime = length; // 基礎時間（秒）
+            let multiplier = 1;
+            
+            // 根據品質調整倍數
+            switch(quality) {
+                case 'fast':
+                    multiplier = 0.7;
+                    break;
+                case 'standard':
+                    multiplier = 1.0;
+                    break;
+                case 'high':
+                    multiplier = 1.5;
+                    break;
+            }
+            
+            const estimatedMinutes = Math.ceil((baseTime * multiplier * 15) / 60); // 假設每秒需要15秒處理時間
+            const minTime = Math.max(1, Math.floor(estimatedMinutes * 0.8));
+            const maxTime = Math.ceil(estimatedMinutes * 1.2);
+            
+            estimatedTimeSpan.text(`約 ${minTime}-${maxTime} 分鐘`);
+        }
+        
+        // 處理進度的步驟（根據是否生成影片和設定動態調整）
+        function getSteps(includeVideo, videoLength, videoQuality) {
             const baseSteps = [
                 { status: '正在分析夢境元素...', detail: '識別關鍵元素與象徵意義', progress: 10 },
                 { status: '正在創作夢境故事...', detail: '融合夢境元素創作完整故事', progress: 25 },
-                { status: '正在生成視覺圖像...', detail: '使用 Stable Diffusion 創建夢境視覺化圖像', progress: includeVideo ? 50 : 70 }
+                { status: '正在生成視覺圖像...', detail: '使用 Stable Diffusion 創建夢境視覺化圖像', progress: includeVideo ? 45 : 70 }
             ];
             
             if (includeVideo) {
-                baseSteps.push({ status: '正在生成夢境影片...', detail: '從圖像創建動態影片，請耐心等候', progress: 85 });
+                const videoProgressStart = 50;
+                const videoProgressEnd = 85;
+                
+                baseSteps.push({ 
+                    status: `正在生成 ${videoLength} 秒夢境影片...`, 
+                    detail: `${videoQuality === 'high' ? '高品質' : videoQuality === 'fast' ? '快速' : '標準'}模式生成中，請耐心等候`, 
+                    progress: videoProgressStart 
+                });
+                
+                // 根據影片長度添加更多進度步驟
+                if (videoLength > 8) {
+                    baseSteps.push({ 
+                        status: '影片生成進行中...', 
+                        detail: '正在處理複雜場景動畫', 
+                        progress: videoProgressEnd - 10 
+                    });
+                }
             }
             
             baseSteps.push(
@@ -193,6 +307,8 @@
             
             const dreamText = dreamInput.val().trim();
             const generateVideo = generateVideoCheckbox.is(':checked');
+            const videoLength = parseInt(videoLengthSlider.val());
+            const videoQuality = videoQualitySelect.val();
             
             // 基本驗證
             if (dreamText.length < 10) {
@@ -211,7 +327,11 @@
             
             // 禁用提交按鈕並改變文字
             analyzeBtn.prop('disabled', true);
-            analyzeBtn.text(generateVideo ? '分析並生成影片中...' : '分析中...');
+            if (generateVideo) {
+                analyzeBtn.text(`分析並生成 ${videoLength} 秒影片中...`);
+            } else {
+                analyzeBtn.text('分析中...');
+            }
             
             // 顯示載入中
             loading.show();
@@ -221,11 +341,11 @@
             progressBar.css('width', '0%');
             progressBar.attr('aria-valuenow', 0);
             
-            const steps = getSteps(generateVideo);
+            const steps = getSteps(generateVideo, videoLength, videoQuality);
             processDetail.text(steps[0].detail);
             
             // 使用AJAX發送請求
-            processDream(dreamText, generateVideo);
+            processDream(dreamText, generateVideo, videoLength, videoQuality);
         });
         
         // 重新開始按鈕
@@ -239,6 +359,11 @@
             charCount.text('0 個字');
             errorMessage.hide();
             generateVideoCheckbox.prop('checked', false);
+            videoSettings.hide();
+            videoLengthSlider.val(5);
+            videoLengthDisplay.text('5');
+            videoQualitySelect.val('standard');
+            updateEstimatedTime();
             $('#video-section').hide();
             dreamInput.focus();
         });
@@ -296,8 +421,8 @@
         });
         
         // 處理夢境分析
-        function processDream(dreamText, generateVideo) {
-            const steps = getSteps(generateVideo);
+        function processDream(dreamText, generateVideo, videoLength, videoQuality) {
+            const steps = getSteps(generateVideo, videoLength, videoQuality);
             
             // 進度更新
             let currentStep = 0;
@@ -314,15 +439,28 @@
                 progressBar.css('width', step.progress + '%');
                 progressBar.attr('aria-valuenow', step.progress);
                 
-                // 圖像生成和影片生成步驟需要停留更長時間
-                if (step.status.includes('生成視覺圖像') || step.status.includes('生成夢境影片')) {
-                    setTimeout(function() {
-                        currentStep++;
-                    }, step.status.includes('生成夢境影片') ? 4000 : 2000);
-                } else {
-                    currentStep++;
+                // 根據步驟類型調整等待時間
+                let waitTime = 1200;
+                if (step.status.includes('生成視覺圖像')) {
+                    waitTime = 2000;
+                } else if (step.status.includes('生成夢境影片')) {
+                    // 根據影片長度和品質調整等待時間
+                    waitTime = Math.max(3000, videoLength * 500);
+                    if (videoQuality === 'high') waitTime *= 1.5;
+                    if (videoQuality === 'fast') waitTime *= 0.7;
                 }
+                
+                setTimeout(function() {
+                    currentStep++;
+                }, waitTime);
             }, 1200);
+            
+            // 計算超時時間（根據影片設定動態調整）
+            let timeoutDuration = 180000; // 基礎 3 分鐘
+            if (generateVideo) {
+                timeoutDuration = Math.max(300000, videoLength * videoLength * 10000); // 最少 5 分鐘
+                if (videoQuality === 'high') timeoutDuration *= 1.5;
+            }
             
             // 發送API請求
             $.ajax({
@@ -331,9 +469,11 @@
                 contentType: 'application/json',
                 data: JSON.stringify({ 
                     dream: dreamText,
-                    generateVideo: generateVideo
+                    generateVideo: generateVideo,
+                    videoLength: videoLength,
+                    videoQuality: videoQuality
                 }),
-                timeout: generateVideo ? 300000 : 180000,  // 如果生成影片則延長到5分鐘超時
+                timeout: timeoutDuration,
                 success: function(response) {
                     // 確保進度條走完
                     setTimeout(function() {
@@ -368,7 +508,7 @@
                     if (xhr.responseJSON && xhr.responseJSON.error) {
                         errorMsg = xhr.responseJSON.error;
                     } else if (status === 'timeout') {
-                        errorMsg = '請求超時，請重試';
+                        errorMsg = '請求超時，請嘗試縮短影片長度或使用快速模式';
                     }
                     
                     errorMessage.text(errorMsg);
@@ -396,6 +536,13 @@
             if (data.videoPath) {
                 $('#dream-video').attr('src', data.videoPath);
                 $('#video-section').show();
+                
+                // 顯示影片資訊徽章
+                if (data.processingInfo && data.processingInfo.videoInfo) {
+                    const videoInfo = data.processingInfo.videoInfo;
+                    $('#video-info-badge').text(`${videoInfo.length}秒 | ${videoInfo.quality}品質`);
+                }
+                
                 console.log('✅ 影片顯示成功:', data.videoPath);
             } else {
                 $('#video-section').hide();
@@ -412,6 +559,9 @@
                 }
             }
         }
+        
+        // 初始化時更新預估時間
+        updateEstimatedTime();
     });
 </script>
 {% endblock %}

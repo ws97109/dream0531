@@ -18,6 +18,4 @@ transformers==4.46.2
 torch>=2.1.0
 torchvision
 torchaudio
-einops 
-opencv-contrib-python 
-av
+
