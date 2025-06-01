@@ -397,25 +397,29 @@ class DreamAnalyzer:
        return render_template('index.html')
 
    def api_status(self):
-       ollama_status = self._check_ollama_status()
-       local_models_status = self.models_loaded or self._load_image_model()
-       framepack_status = self._check_framepack_status()
-       
-       return jsonify({
-           'ollama': ollama_status,
-           'local_models': local_models_status,
-           'framepack_video': framepack_status,
-           'device': self.current_device,
-           'available_models': list(self.models.keys()),
-           'timestamp': int(time.time())
-       })
+    ollama_status = self._check_ollama_status()
+    local_models_status = self.models_loaded or self._load_image_model()
+    
+    # 檢查 HuggingFace API 狀態
+    from framepack_integrator import is_framepack_available
+    hf_api_status = is_framepack_available()
+    
+    return jsonify({
+        'ollama': ollama_status,
+        'local_models': local_models_status,
+        'framepack_video': hf_api_status,
+        'video_method': 'HuggingFace API',
+        'device': self.current_device,
+        'available_models': list(self.models.keys()),
+        'timestamp': int(time.time())
+    })
 
    def analyze(self):
        data = request.json
        dream_text = data.get('dream', '')
        selected_model = data.get('model', 'stable-diffusion-v1-5')
        generate_video = data.get('generateVideo', False)
-       video_length = data.get('videoLength', 5)
+       video_length = min(data.get('videoLength', 3), 3) 
        video_quality = data.get('videoQuality', 'standard')
        
        # 輸入驗證
